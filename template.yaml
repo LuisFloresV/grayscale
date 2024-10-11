@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sam-lambda-s3
+
+  Sample SAM Template for sam-lambda-s3
+
+Globals:
+  Function:
+    Timeout: 60
+
+Parameters:
+  NotificationEmail:
+    Type: String
+    Description: "The email address to receive notifications"
+    ConstraintDescription: "Must be a valid email address"
+
+Resources:
+  GrayscaleFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: LambdaExecutionRole  # Ensure LambdaExecutionRole is created first
+    Properties:
+      CodeUri: img-to-grayscale/
+      Handler: app.lambdaHandler
+      Runtime: nodejs18.x
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Architectures:
+        - x86_64
+      Events:
+        S3UploadEvent:
+          Type: S3
+          Properties:
+            Bucket: !Ref UploadBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: upload/
+
+  SNSNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: S3UploadNotificationTopic
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref NotificationEmail
+
+  UploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: grayscale-transform-bucket-123-123
+      NotificationConfiguration:
+        TopicConfigurations:
+          - Event: s3:ObjectCreated:*
+            Topic: !Ref SNSNotificationTopic
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: grayscale/
+
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 's3.amazonaws.com'
+            Action: sns:Publish
+            Resource: !Ref SNSNotificationTopic
+            Condition:
+              ArnEquals:
+                aws:SourceArn: "arn:aws:s3:*:*:grayscale-transform-bucket-123-123"
+      Topics:
+        - !Ref SNSNotificationTopic
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - arn:aws:s3:::grayscale-transform-bucket-123-123
+                  - arn:aws:s3:::grayscale-transform-bucket-123-123/*
